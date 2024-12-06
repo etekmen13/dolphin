@@ -35,6 +35,11 @@
 #include "VideoCommon/VideoConfig.h"
 #include "VideoCommon/XFMemory.h"
 
+#include "!Emre-TextureShare.h"
+HANDLE hEvent;
+HANDLE shared_handle;
+ComPtr<IDXGIResource> dxgi_resource;
+ComPtr<ID3D11Texture2D> backBuffer;
 namespace DX11
 {
 Gfx::Gfx(std::unique_ptr<SwapChain> swap_chain, float backbuffer_scale)
@@ -164,8 +169,106 @@ bool Gfx::BindBackbuffer(const ClearColor& clear_color)
   return true;
 }
 
+
 void Gfx::PresentBackbuffer()
 {
+  WaitForSingleObject(hEvent, INFINITE);
+#pragma region
+  /*
+    Emre Tekmen
+    Set the handle and write to shared memory
+    */
+  HRESULT hr = m_swap_chain->GetDXGISwapChain()->GetBuffer(
+      0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(backBuffer.GetAddressOf()));
+  if (FAILED(hr))
+  {
+    NOTICE_LOG_FMT(VIDEO, "Failed to get backbuffer");
+    return;
+  }
+  D3D11_TEXTURE2D_DESC desc;
+  ComPtr<ID3D11Texture2D> shared_texture;
+
+  backBuffer->GetDesc(&desc);
+
+  desc.BindFlags = 0;
+  desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
+
+  hr = D3D::device->CreateTexture2D(&desc, nullptr, shared_texture.GetAddressOf());
+
+  if (FAILED(hr))
+  {
+    NOTICE_LOG_FMT(VIDEO, "Failed to create shared texture");
+    return;
+  }
+  D3D::context->CopyResource(shared_texture.Get(), backBuffer.Get());
+
+  NOTICE_LOG_FMT(VIDEO, "BackBuffer is unorm format: {}",
+                 (UINT)desc.Format);
+  UINT width = desc.Width;
+  UINT height = desc.Height;
+
+  hr = shared_texture.As(&dxgi_resource);
+  ComPtr<ID3D11Texture2D> stagingTexture;
+  hr = D3D::device->CreateTexture2D(&desc, nullptr, stagingTexture.GetAddressOf());
+  if (FAILED(hr))
+  {
+    NOTICE_LOG_FMT(VIDEO, "Failed to create staging texture. HRESULT: {}", hr);
+    return;
+  }
+  D3D11_MAPPED_SUBRESOURCE mappedResource;
+  hr = D3D::context->Map(stagingTexture.Get(), 0, D3D11_MAP_READ, 0, &mappedResource);
+  if (FAILED(hr))
+  {
+    NOTICE_LOG_FMT(VIDEO, "Mapping failed, HRESULT {}", hr);
+    return;
+  }
+  uint32_t* data = reinterpret_cast<uint32_t*>(mappedResource.pData);
+  UINT rowPitch = mappedResource.RowPitch / sizeof(uint32_t);
+
+  // Read the texture data, ensuring row alignment
+  for (UINT y = 0; y < desc.Height; ++y)
+  {
+    for (UINT x = 0; x < desc.Width; ++x)
+    {
+      uint32_t pixel = data[y * rowPitch + x];
+      NOTICE_LOG_FMT(VIDEO, "Pixel: {}", pixel);
+    }
+  }
+  hr = dxgi_resource->GetSharedHandle(&shared_handle);
+  if (FAILED(hr))
+  {
+    NOTICE_LOG_FMT(VIDEO, "Failed to get shared handle. HRESULT: {}", hr);
+    return;
+  }
+  void* pMappedMem = MapViewOfFile(hMapFile, FILE_MAP_WRITE, 0, 0,
+                                   32);  // map 32 bytes into the virtual address space
+
+  /* HANDLE inheritableHandle = nullptr;
+   hr = DuplicateHandle(GetCurrentProcess(), shared_handle, GetCurrentProcess(), &inheritableHandle,
+                        0, TRUE, DUPLICATE_SAME_ACCESS);
+   if (FAILED(hr))
+   {
+     NOTICE_LOG_FMT(VIDEO,"Failed to duplicate shared handle with inheritance");
+     return;
+   }*/
+  struct SharedTextureData sd;
+  sd.handle = shared_handle;
+  sd.width = width;
+  sd.height = height;
+  NOTICE_LOG_FMT(VIDEO, "handle: {} width {} height {}", sd.handle, sd.width, sd.height);
+  if (pMappedMem)
+  {
+    std::memcpy(pMappedMem, &sd, sizeof(SharedTextureData));
+    UnmapViewOfFile(pMappedMem);
+  }
+
+  ResetEvent(hEvent);
+  /*
+    End
+  */
+#pragma endregion
+
+
   m_swap_chain->Present();
 }
 

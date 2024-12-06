@@ -79,13 +79,14 @@ bool SwapChain::CreateSwapChain(bool stereo, bool hdr)
   HRESULT hr = m_dxgi_factory.As(&dxgi_factory2);
   if (SUCCEEDED(hr))
   {
+    NOTICE_LOG_FMT(VIDEO, "Swap Chain Success");
     m_allow_tearing_supported = IsTearingSupported(dxgi_factory2.Get());
 
     DXGI_SWAP_CHAIN_DESC1 swap_chain_desc = {};
     swap_chain_desc.Width = m_width;
     swap_chain_desc.Height = m_height;
     swap_chain_desc.BufferCount = SWAP_CHAIN_BUFFER_COUNT;
-    swap_chain_desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+    swap_chain_desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT | DXGI_USAGE_SHARED;
     swap_chain_desc.SampleDesc.Count = 1;
     swap_chain_desc.SampleDesc.Quality = 0;
     swap_chain_desc.Format = GetDXGIFormatForAbstractFormat(m_texture_format, false);
@@ -125,7 +126,7 @@ bool SwapChain::CreateSwapChain(bool stereo, bool hdr)
     desc.BufferDesc.Format = GetDXGIFormatForAbstractFormat(m_texture_format, false);
     desc.SampleDesc.Count = 1;
     desc.SampleDesc.Quality = 0;
-    desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+    desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT | DXGI_USAGE_SHARED;
     desc.BufferCount = SWAP_CHAIN_BUFFER_COUNT;
     desc.OutputWindow = static_cast<HWND>(m_wsi.render_surface);
     desc.Windowed = TRUE;

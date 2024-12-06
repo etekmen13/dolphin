@@ -26,7 +26,7 @@ protected:
   using AnyCallback = s32 (*)(PowerPC::PowerPCState& ppc_state, const void* operands);
 
   template <class Operands>
-  static consteval Callback<Operands> CallbackCast(Callback<Operands> callback)
+  static constexpr Callback<Operands> CallbackCast(Callback<Operands> callback)
   {
     return callback;
   }
@@ -35,7 +35,7 @@ protected:
   {
     return reinterpret_cast<AnyCallback>(callback);
   }
-  static consteval AnyCallback AnyCallbackCast(AnyCallback callback) { return callback; }
+  static constexpr AnyCallback AnyCallbackCast(AnyCallback callback) { return callback; }
 
   // Disassemble callbacks will always return the distance to the next callback.
   template <class Operands>

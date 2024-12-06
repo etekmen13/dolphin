@@ -26,6 +26,13 @@
 #include "VideoCommon/VideoCommon.h"
 #include "VideoCommon/VideoConfig.h"
 
+/*
+Emre Tekmen
+Header for IPC between dolphin and RL program.
+*/
+#include "!Emre-TextureShare.h"
+HANDLE hSharedEvent;
+HANDLE hMapFile;
 namespace DX11
 {
 std::string VideoBackend::GetName() const
@@ -161,7 +168,19 @@ bool VideoBackend::Initialize(const WindowSystemInfo& wsi)
   auto vertex_manager = std::make_unique<VertexManager>();
   auto perf_query = std::make_unique<PerfQuery>();
   auto bounding_box = std::make_unique<D3DBoundingBox>();
+  /*
+    Emre Tekmen
+    Intialize Shared event for synchronization
+  */
+  hSharedEvent = CreateEventW(NULL, FALSE, FALSE, L"DolphinRLSharedEvent");
+  hMapFile = CreateFileMappingW(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, 32,
+                                L"D3DSharedHandleMapping");
 
+  if (!hMapFile)
+  {
+    PanicAlertFmt("Failed to create file mapping: {}", GetLastError());
+    return false;
+  }
   return InitializeShared(std::move(gfx), std::move(vertex_manager), std::move(perf_query),
                           std::move(bounding_box));
 }
