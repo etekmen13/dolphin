@@ -175,7 +175,13 @@ bool VideoBackend::Initialize(const WindowSystemInfo& wsi)
   hSharedEvent = CreateEventW(NULL, FALSE, FALSE, L"DolphinRLSharedEvent");
   hMapFile = CreateFileMappingW(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, 32,
                                 L"D3DSharedHandleMapping");
-
+  if (hSharedEvent == NULL)
+  {
+    DWORD dwError = GetLastError();
+    printf("CreateEvent failed with error code: %lu\n", dwError);
+    return false;  // Handle error appropriately
+  }
+  SetEvent(hSharedEvent);
   if (!hMapFile)
   {
     PanicAlertFmt("Failed to create file mapping: {}", GetLastError());

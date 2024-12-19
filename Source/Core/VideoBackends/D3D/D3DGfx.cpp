@@ -35,8 +35,8 @@
 #include "VideoCommon/VideoConfig.h"
 #include "VideoCommon/XFMemory.h"
 
+#include <tinygltf/stb_image_write.h>
 #include "!Emre-TextureShare.h"
-HANDLE hEvent;
 HANDLE shared_handle;
 ComPtr<IDXGIResource> dxgi_resource;
 ComPtr<ID3D11Texture2D> backBuffer;
@@ -168,11 +168,52 @@ bool Gfx::BindBackbuffer(const ClearColor& clear_color)
   SetAndClearFramebuffer(m_swap_chain->GetFramebuffer(), clear_color);
   return true;
 }
+void StageandSavePNG(ComPtr<ID3D11Texture2D> shared_texture, UINT width, UINT height)
+{
+  ComPtr<ID3D11Texture2D> staging_texture;
+  D3D11_TEXTURE2D_DESC staging_desc;
+  shared_texture->GetDesc(&staging_desc);
+  staging_desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+  staging_desc.Usage = D3D11_USAGE_STAGING;
+  staging_desc.BindFlags = 0;  // Staging textures cannot have bind flags
+  staging_desc.MiscFlags = 0;  // No special miscellaneous flags
 
+  HRESULT hr = D3D::device->CreateTexture2D(&staging_desc, nullptr, staging_texture.GetAddressOf());
+  if (FAILED(hr))
+  {
+    // std::cerr << "Failed to create staging texture: " << std::hex << hr << std::endl;
+    return;
+  }
+  D3D::context->CopyResource(staging_texture.Get(), shared_texture.Get());
+    D3D::context->Flush();  // Ensure all GPU commands are executed
+  // Map the staging texture to CPU memory
+  D3D11_MAPPED_SUBRESOURCE mappedResource;
+  hr = D3D::context->Map(staging_texture.Get(), 0, D3D11_MAP_READ, 0, &mappedResource);
+  if (FAILED(hr))
+  {
+    NOTICE_LOG_FMT(VIDEO, "Failed to map staging texture: ");
+    return;
+  }
+  BYTE* data = reinterpret_cast<BYTE*>(mappedResource.pData);
+  if (!data)
+  {
+    NOTICE_LOG_FMT(VIDEO, "Failed to allocate CPU buffer");
+    D3D::context->Unmap(staging_texture.Get(), 0);
+    return;
+  }
 
+  if (!stbi_write_png("before_cuda.png", width, height, 4, data, mappedResource.RowPitch))
+  {
+    NOTICE_LOG_FMT(VIDEO, "failed to write DX11 as PNG");
+  }
+  // Unmap and release the staging texture
+  D3D::context->Unmap(staging_texture.Get(), 0);
+  staging_texture.Reset();
+}
 void Gfx::PresentBackbuffer()
 {
-  WaitForSingleObject(hEvent, INFINITE);
+
+
 #pragma region
   /*
     Emre Tekmen
@@ -190,9 +231,10 @@ void Gfx::PresentBackbuffer()
 
   backBuffer->GetDesc(&desc);
 
-  desc.BindFlags = 0;
+  desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
   desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
-
+  desc.Usage = D3D11_USAGE_DEFAULT;
+  desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
   hr = D3D::device->CreateTexture2D(&desc, nullptr, shared_texture.GetAddressOf());
 
   if (FAILED(hr))
@@ -202,38 +244,21 @@ void Gfx::PresentBackbuffer()
   }
   D3D::context->CopyResource(shared_texture.Get(), backBuffer.Get());
 
-  NOTICE_LOG_FMT(VIDEO, "BackBuffer is unorm format: {}",
-                 (UINT)desc.Format);
+ //  NOTICE_LOG_FMT(VIDEO, "BackBuffer is unorm format: {}", (UINT)desc.Format);
   UINT width = desc.Width;
   UINT height = desc.Height;
 
   hr = shared_texture.As(&dxgi_resource);
-  ComPtr<ID3D11Texture2D> stagingTexture;
-  hr = D3D::device->CreateTexture2D(&desc, nullptr, stagingTexture.GetAddressOf());
-  if (FAILED(hr))
-  {
-    NOTICE_LOG_FMT(VIDEO, "Failed to create staging texture. HRESULT: {}", hr);
-    return;
-  }
-  D3D11_MAPPED_SUBRESOURCE mappedResource;
-  hr = D3D::context->Map(stagingTexture.Get(), 0, D3D11_MAP_READ, 0, &mappedResource);
-  if (FAILED(hr))
-  {
-    NOTICE_LOG_FMT(VIDEO, "Mapping failed, HRESULT {}", hr);
-    return;
-  }
-  uint32_t* data = reinterpret_cast<uint32_t*>(mappedResource.pData);
-  UINT rowPitch = mappedResource.RowPitch / sizeof(uint32_t);
+  //NOTICE_LOG_FMT(VIDEO, "test 1");
 
-  // Read the texture data, ensuring row alignment
-  for (UINT y = 0; y < desc.Height; ++y)
+  if (FAILED(hr))
   {
-    for (UINT x = 0; x < desc.Width; ++x)
-    {
-      uint32_t pixel = data[y * rowPitch + x];
-      NOTICE_LOG_FMT(VIDEO, "Pixel: {}", pixel);
-    }
+    NOTICE_LOG_FMT(VIDEO, "backbuffer.As has failed, HRESULT {}", hr);
+    return;
   }
+  NOTICE_LOG_FMT(VIDEO, "saving...");
+  StageandSavePNG(shared_texture, width, height);
+
   hr = dxgi_resource->GetSharedHandle(&shared_handle);
   if (FAILED(hr))
   {
@@ -243,31 +268,34 @@ void Gfx::PresentBackbuffer()
   void* pMappedMem = MapViewOfFile(hMapFile, FILE_MAP_WRITE, 0, 0,
                                    32);  // map 32 bytes into the virtual address space
 
-  /* HANDLE inheritableHandle = nullptr;
-   hr = DuplicateHandle(GetCurrentProcess(), shared_handle, GetCurrentProcess(), &inheritableHandle,
-                        0, TRUE, DUPLICATE_SAME_ACCESS);
-   if (FAILED(hr))
-   {
-     NOTICE_LOG_FMT(VIDEO,"Failed to duplicate shared handle with inheritance");
-     return;
-   }*/
   struct SharedTextureData sd;
   sd.handle = shared_handle;
   sd.width = width;
   sd.height = height;
-  NOTICE_LOG_FMT(VIDEO, "handle: {} width {} height {}", sd.handle, sd.width, sd.height);
+ // NOTICE_LOG_FMT(VIDEO, "handle: {} width {} height {}", sd.handle, sd.width, sd.height);
   if (pMappedMem)
   {
     std::memcpy(pMappedMem, &sd, sizeof(SharedTextureData));
-    UnmapViewOfFile(pMappedMem);
+  }
+  //NOTICE_LOG_FMT(VIDEO, "waiting");
+  D3D::context->Flush();
+  SetEvent(hSharedEvent);
+  hr = WaitForSingleObject(hSharedEvent, INFINITE);
+  if (FAILED(hr))
+  {
+    NOTICE_LOG_FMT(VIDEO, "Wait Failed, HRESULT: {}, GetLastError: {}", hr, GetLastError());
   }
 
-  ResetEvent(hEvent);
+  if(pMappedMem) {
+    UnmapViewOfFile(pMappedMem);
+  }
+  shared_texture.Reset();
+  dxgi_resource.Reset();
+
   /*
     End
   */
 #pragma endregion
-
 
   m_swap_chain->Present();
 }
